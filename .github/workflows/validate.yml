@@ -1,0 +1,55 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell-and-xaml:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse PowerShell
+        shell: pwsh
+        run: |
+          $allErrors = [System.Collections.Generic.List[object]]::new()
+
+          Get-ChildItem -Path $PWD -Recurse -Filter '*.ps1' | ForEach-Object {
+              $tokens = $null
+              $parseErrors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  $_.FullName,
+                  [ref] $tokens,
+                  [ref] $parseErrors
+              ) | Out-Null
+
+              foreach ($parseError in $parseErrors) {
+                  $allErrors.Add($parseError)
+              }
+          }
+
+          if ($allErrors.Count -gt 0) {
+              $allErrors | Format-List | Out-String | Write-Error
+              throw "PowerShell parsing failed with $($allErrors.Count) error(s)."
+          }
+
+          Write-Host 'PowerShell parsing succeeded.'
+
+      - name: Parse and instantiate XAML
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase, System.Xaml
+
+          [xml] $xaml = Get-Content -LiteralPath 'src/MainWindow.xaml' -Raw
+          $reader = [System.Xml.XmlNodeReader]::new($xaml)
+          $window = [Windows.Markup.XamlReader]::Load($reader)
+
+          if ($null -eq $window) {
+              throw 'WPF returned no window from MainWindow.xaml.'
+          }
+
+          Write-Host 'XAML parsing and WPF instantiation succeeded.'
